@@ -1,59 +1,33 @@
 package me.whish.telegramShiftWorld
 
-import me.whish.telegramShiftWorld.Commands.TelegramAdminCommand
-import me.whish.telegramShiftWorld.Commands.TelegramCommand
 import me.whish.telegramShiftWorld.Events.PlayerJoinListener
 import org.bukkit.plugin.java.JavaPlugin
 
 class TelegramShiftWorld : JavaPlugin() {
 
-    companion object {
-        lateinit var instance: TelegramShiftWorld
-            private set
-    }
-
-    lateinit var configManager: ConfigManager
-        private set
-
     lateinit var linkingManager: LinkingManager
-        private set
-
-    lateinit var telegramBotManager: TelegramBotManager
-        private set
+    lateinit var httpApiManager: HttpApiManager
 
     override fun onEnable() {
-        instance = this
+        saveDefaultConfig()
 
-        configManager = ConfigManager(this)
         linkingManager = LinkingManager(this)
-        telegramBotManager = TelegramBotManager(this)
 
-        // Загрузка конфигурации
-        configManager.loadConfig()
-
-        // Загрузка привязок
-        linkingManager.loadLinks()
-
-        // Запуск Telegram бота
-        if (!telegramBotManager.startBot()) {
-            logger.severe("Не удалось запустить Telegram бота! Проверьте токен в конфигурации.")
-            server.pluginManager.disablePlugin(this)
-            return
+        // Запускаем только HTTP API, НЕ Telegram бота
+        if (config.getBoolean("api.enabled", true)) {
+            httpApiManager = HttpApiManager(this)
+            httpApiManager.startServer()
         }
 
         // Регистрация событий
         server.pluginManager.registerEvents(PlayerJoinListener(this), this)
 
-        // Регистрация команд
-        getCommand("telegram")?.setExecutor(TelegramCommand(this))
-        getCommand("telegramadmin")?.setExecutor(TelegramAdminCommand(this))
-
         logger.info("TelegramShiftWorld has been enabled!")
     }
 
     override fun onDisable() {
-        if (::telegramBotManager.isInitialized) {
-            telegramBotManager.stopBot()
+        if (::httpApiManager.isInitialized) {
+            httpApiManager.stopServer()
         }
 
         if (::linkingManager.isInitialized) {
@@ -61,11 +35,5 @@ class TelegramShiftWorld : JavaPlugin() {
         }
 
         logger.info("TelegramShiftWorld has been disabled!")
-    }
-
-    fun debug(message: String) {
-        if (configManager.isDebugEnabled()) {
-            logger.info("[DEBUG] $message")
-        }
     }
 }

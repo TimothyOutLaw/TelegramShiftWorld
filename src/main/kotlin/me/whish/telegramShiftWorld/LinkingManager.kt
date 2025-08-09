@@ -1,181 +1,256 @@
 package me.whish.telegramShiftWorld
 
-import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import me.whish.telegramShiftWorld.data.LinkData
-import me.whish.telegramShiftWorld.data.PendingCode
+import org.bukkit.configuration.file.YamlConfiguration
 import java.io.File
-import java.io.FileReader
-import java.io.FileWriter
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.random.Random
+
+data class PendingCode(
+    val code: String,
+    val playerUuid: UUID,
+    val playerName: String,
+    val expiryTime: Long
+)
 
 class LinkingManager(private val plugin: TelegramShiftWorld) {
 
-    private val gson = Gson()
-    private val linksFile = File(plugin.dataFolder, "links.json")
-
-    // UUID игрока -> ID Telegram пользователя
-    private val playerLinks = ConcurrentHashMap<UUID, Long>()
-
-    // Код -> данные ожидающего кода
+    private val linksFile = File(plugin.dataFolder, "links.yml")
+    private val links = ConcurrentHashMap<UUID, Long>() // UUID -> Telegram ID
     private val pendingCodes = ConcurrentHashMap<String, PendingCode>()
+    private val reverseLinks = ConcurrentHashMap<Long, UUID>() // Telegram ID -> UUID
 
-    // ID Telegram пользователя -> UUID игрока (для быстрого поиска)
-    private val reverseLinks = ConcurrentHashMap<Long, UUID>()
+    private val codeExpiryTime: Long = plugin.config.getLong("linking.code_expiry_minutes", 10) * 60 * 1000
+    private val cleanupTask: Int
 
-    fun loadLinks() {
+    init {
+        loadLinks()
+
+        // Запускаем задачу очистки каждые 30 секунд
+        cleanupTask = plugin.server.scheduler.scheduleSyncRepeatingTask(plugin, {
+            cleanupExpiredCodes()
+        }, 600L, 600L) // 30 секунд = 600 тиков
+    }
+
+    /**
+     * Загружает привязки из файла
+     */
+    private fun loadLinks() {
         if (!linksFile.exists()) {
-            plugin.debug("Файл links.json не существует, создаем новый")
             return
         }
 
         try {
-            val type = object : TypeToken<Map<String, LinkData>>() {}.type
-            val links: Map<String, LinkData> = gson.fromJson(FileReader(linksFile), type) ?: emptyMap()
+            val config = YamlConfiguration.loadConfiguration(linksFile)
+            val linksSection = config.getConfigurationSection("links")
 
-            for ((uuidString, linkData) in links) {
-                val uuid = UUID.fromString(uuidString)
-                playerLinks[uuid] = linkData.telegramId
-                reverseLinks[linkData.telegramId] = uuid
+            linksSection?.getKeys(false)?.forEach { uuidString ->
+                try {
+                    val uuid = UUID.fromString(uuidString)
+                    val telegramId = linksSection.getLong(uuidString)
+
+                    if (telegramId != 0L) {
+                        links[uuid] = telegramId
+                        reverseLinks[telegramId] = uuid
+                    }
+                } catch (_: IllegalArgumentException) {
+                    plugin.logger.warning("Неверный UUID в файле привязок: $uuidString")
+                }
             }
 
-            plugin.logger.info("Загружено ${playerLinks.size} привязок аккаунтов")
+            plugin.logger.info("Загружено ${links.size} привязок")
+
         } catch (e: Exception) {
-            plugin.logger.severe("Ошибка при загрузке привязок: ${e.message}")
+            plugin.logger.severe("Ошибка загрузки привязок: ${e.message}")
         }
     }
 
+    /**
+     * Сохраняет привязки в файл
+     */
     fun saveLinks() {
         try {
             if (!plugin.dataFolder.exists()) {
                 plugin.dataFolder.mkdirs()
             }
 
-            val linksToSave = mutableMapOf<String, LinkData>()
-            for ((uuid, telegramId) in playerLinks) {
-                linksToSave[uuid.toString()] = LinkData(telegramId, System.currentTimeMillis())
+            val config = YamlConfiguration()
+            val linksSection = config.createSection("links")
+
+            links.forEach { (uuid, telegramId) ->
+                linksSection.set(uuid.toString(), telegramId)
             }
 
-            FileWriter(linksFile).use { writer ->
-                gson.toJson(linksToSave, writer)
-            }
+            config.save(linksFile)
 
-            plugin.debug("Сохранено ${playerLinks.size} привязок")
         } catch (e: Exception) {
-            plugin.logger.severe("Ошибка при сохранении привязок: ${e.message}")
+            plugin.logger.severe("Ошибка сохранения привязок: ${e.message}")
         }
     }
 
-    fun isPlayerLinked(playerUuid: UUID): Boolean {
-        return playerLinks.containsKey(playerUuid)
-    }
-
-    fun getPlayerTelegramId(playerUuid: UUID): Long? {
-        return playerLinks[playerUuid]
-    }
-
-    fun getTelegramPlayerUuid(telegramId: Long): UUID? {
-        return reverseLinks[telegramId]
-    }
-
-    fun linkPlayer(playerUuid: UUID, telegramId: Long) {
-        // Удаляем старые привязки если есть
-        val oldTelegramId = playerLinks[playerUuid]
-        if (oldTelegramId != null) {
-            reverseLinks.remove(oldTelegramId)
-        }
-
-        val oldPlayerUuid = reverseLinks[telegramId]
-        if (oldPlayerUuid != null) {
-            playerLinks.remove(oldPlayerUuid)
-        }
-
-        // Добавляем новую привязку
-        playerLinks[playerUuid] = telegramId
-        reverseLinks[telegramId] = playerUuid
-
-        plugin.debug("Привязан игрок $playerUuid к Telegram ID $telegramId")
-
-        // Сохраняем асинхронно
-        plugin.server.scheduler.runTaskAsynchronously(plugin, Runnable {
-            saveLinks()
-        })
-    }
-
-    fun unlinkPlayer(playerUuid: UUID): Boolean {
-        val telegramId = playerLinks.remove(playerUuid)
-        if (telegramId != null) {
-            reverseLinks.remove(telegramId)
-            plugin.debug("Отвязан игрок $playerUuid от Telegram ID $telegramId")
-
-            // Сохраняем асинхронно
-            plugin.server.scheduler.runTaskAsynchronously(plugin, Runnable {
-                saveLinks()
-            })
-            return true
-        }
-        return false
-    }
-
-    fun generateCode(playerUuid: UUID, playerName: String): String {
-        // Удаляем старые коды для этого игрока
-        pendingCodes.entries.removeAll { it.value.playerUuid == playerUuid }
-
-        // Генерируем новый код
+    /**
+     * Генерирует код привязки для игрока
+     */
+    fun generateLinkingCode(playerUuid: UUID, playerName: String): String {
         val code = generateRandomCode()
-        val expiryTime = System.currentTimeMillis() + (plugin.configManager.getCodeExpiryMinutes() * 60 * 1000)
+        val expiryTime = System.currentTimeMillis() + codeExpiryTime
 
-        pendingCodes[code] = PendingCode(playerUuid, playerName, expiryTime)
-
-        plugin.debug("Сгенерирован код $code для игрока $playerName ($playerUuid)")
+        val pendingCode = PendingCode(code, playerUuid, playerName, expiryTime)
+        pendingCodes[code] = pendingCode
 
         return code
     }
 
+    /**
+     * Верифицирует код и создает привязку
+     */
+    @Synchronized
     fun verifyCode(code: String, telegramId: Long): Boolean {
-        val pendingCode = pendingCodes[code] ?: return false
 
-        // Проверяем не истек ли код
-        if (System.currentTimeMillis() > pendingCode.expiryTime) {
-            pendingCodes.remove(code)
-            plugin.debug("Код $code истек")
+        val pendingCode = pendingCodes[code]
+        if (pendingCode == null) {
             return false
         }
 
-        // Привязываем аккаунты
-        linkPlayer(pendingCode.playerUuid, telegramId)
+        if (System.currentTimeMillis() > pendingCode.expiryTime) {
+            pendingCodes.remove(code)
+            return false
+        }
+
+        // Удаляем старую привязку если она существует
+        val oldUuid = reverseLinks.remove(telegramId)
+        if (oldUuid != null) {
+            links.remove(oldUuid)
+        }
+
+        // Удаляем старую привязку для этого игрока
+        val oldTelegramId = links.remove(pendingCode.playerUuid)
+        if (oldTelegramId != null) {
+            reverseLinks.remove(oldTelegramId)
+        }
+
+        // Создаем новую привязку
+        links[pendingCode.playerUuid] = telegramId
+        reverseLinks[telegramId] = pendingCode.playerUuid
         pendingCodes.remove(code)
 
-        plugin.debug("Код $code успешно использован для привязки")
+        plugin.logger.info("Привязка создана: ${pendingCode.playerName} (${pendingCode.playerUuid}) -> Telegram ID $telegramId")
+
+        // Автоматически сохраняем
+        saveLinks()
         return true
     }
 
-    fun cleanupExpiredCodes() {
-        val currentTime = System.currentTimeMillis()
-        val expiredCodes = pendingCodes.filterValues { it.expiryTime < currentTime }.keys
+    /**
+     * Получает Telegram ID по UUID игрока
+     */
+    fun getLinkedTelegram(playerUuid: UUID): Long? {
+        return links[playerUuid]
+    }
 
-        for (expiredCode in expiredCodes) {
-            pendingCodes.remove(expiredCode)
-        }
+    /**
+     * Получает UUID игрока по Telegram ID
+     */
+    fun getLinkedPlayer(telegramId: Long): UUID? {
+        return reverseLinks[telegramId]
+    }
 
-        if (expiredCodes.isNotEmpty()) {
-            plugin.debug("Удалено ${expiredCodes.size} истекших кодов")
+    /**
+     * Получает имя привязанного игрока по Telegram ID
+     */
+    fun getLinkedPlayerName(telegramId: Long): String? {
+        val uuid = getLinkedPlayer(telegramId) ?: return null
+        return plugin.server.getOfflinePlayer(uuid).name
+    }
+
+    /**
+     * Отвязывает аккаунт игрока
+     */
+    @Synchronized
+    fun unlinkPlayer(playerUuid: UUID): Boolean {
+        val telegramId = links.remove(playerUuid)
+        return if (telegramId != null) {
+            reverseLinks.remove(telegramId)
+            saveLinks()
+            plugin.logger.info("Отвязан аккаунт игрока: $playerUuid")
+            true
+        } else {
+            false
         }
     }
 
+    /**
+     * Отвязывает аккаунт по Telegram ID
+     */
+    @Synchronized
+    fun unlinkTelegram(telegramId: Long): Boolean {
+        val playerUuid = reverseLinks.remove(telegramId)
+        return if (playerUuid != null) {
+            links.remove(playerUuid)
+            saveLinks()
+            plugin.logger.info("Отвязан аккаунт Telegram ID: $telegramId")
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
+     * Очищает истекшие коды
+     */
+    fun cleanupExpiredCodes() {
+        val currentTime = System.currentTimeMillis()
+        val expiredCodes = mutableListOf<String>()
+
+        pendingCodes.forEach { (code, pendingCode) ->
+            if (currentTime > pendingCode.expiryTime) {
+                expiredCodes.add(code)
+            }
+        }
+    }
+
+    /**
+     * Получает информацию о коде (для API)
+     */
+    fun getCodeInfo(code: String): PendingCode? {
+        val pendingCode = pendingCodes[code]
+
+        // Проверяем актуальность
+        if (pendingCode != null && System.currentTimeMillis() > pendingCode.expiryTime) {
+            pendingCodes.remove(code)
+            return null
+        }
+
+        return pendingCode
+    }
+
+    /**
+     * Получает статистику
+     */
+    fun getStats(): Map<String, Any> {
+        return mapOf(
+            "total_links" to links.size,
+            "pending_codes" to pendingCodes.size,
+            "active_codes" to pendingCodes.values.count {
+                System.currentTimeMillis() <= it.expiryTime
+            }
+        )
+    }
+
+    /**
+     * Генерирует случайный код
+     */
     private fun generateRandomCode(): String {
         val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        val length = plugin.configManager.getCodeLength()
-
-        return (1..length)
-            .map { chars[Random.nextInt(chars.length)] }
+        return (1..8)
+            .map { chars.random() }
             .joinToString("")
     }
 
-    fun getLinkedPlayersCount(): Int = playerLinks.size
-
-    fun getPendingCodesCount(): Int = pendingCodes.size
-
+    /**
+     * Очистка при отключении плагина
+     */
+    fun shutdown() {
+        plugin.server.scheduler.cancelTask(cleanupTask)
+        saveLinks()
+    }
 }
