@@ -1,0 +1,27 @@
+name: TelegramShiftWorld
+version: '1.0'
+main: me.whish.telegramShiftWorld.TelegramShiftWorld
+description: Telegram account linking plugin for Minecraft
+api-version: '1.21'
+authors: [ Whish ]
+
+commands:
+  telegram:
+    description: Telegram linking commands
+    usage: /telegram <subcommand>
+    permission: telegramshiftworld.use
+  telegramadmin:
+    description: Admin commands for Telegram linking
+    usage: /telegramadmin <subcommand>
+    permission: telegramshiftworld.admin
+
+permissions:
+  telegramshiftworld.use:
+    description: Allows using telegram commands
+    default: true
+  telegramshiftworld.admin:
+    description: Allows using admin commands
+    default: op
+  telegramshiftworld.bypass:
+    description: Bypasses telegram linking requirement
+    default: false

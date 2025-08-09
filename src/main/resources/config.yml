@@ -1,0 +1,43 @@
+# Конфигурация TelegramShiftWorld
+# Токен вашего Telegram бота
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  bot_username: "YOUR_BOT_USERNAME"
+
+# Сообщения
+messages:
+  kick_message: |
+    §c§lТребуется привязка Telegram!
+    
+    §fДля игры на сервере необходимо привязать ваш Telegram аккаунт.
+    
+    §e§lИнструкция:
+    §f1. Найдите нашего бота в Telegram: §b@%bot_username%
+    §f2. Отправьте боту команду: §a/link %code%
+    §f3. После успешной привязки заходите на сервер!
+    
+    §7Ваш код привязки: §e%code%
+    
+    §cНе передавайте этот код другим игрокам!
+
+  already_linked: "§a§lВаш аккаунт уже привязан к Telegram!"
+
+  link_success: "§a§lУспешно! Ваш аккаунт привязан к Telegram!"
+
+  code_expired: "§c§lКод истек! Зайдите на сервер снова для получения нового кода."
+
+  invalid_code: "§c§lНеверный код! Проверьте правильность введенного кода."
+
+# Настройки кодов
+codes:
+  # Время жизни кода в минутах
+  expiry_minutes: 10
+  # Длина кода
+  length: 8
+
+# Настройки плагина
+settings:
+  # Включить проверку при входе
+  check_on_join: true
+  # Включить отладочные сообщения в консоль
+  debug: false
