@@ -1,14 +1,13 @@
 package me.whish.telegramShiftWorld.Events
 
 import me.whish.telegramShiftWorld.TelegramShiftWorld
-import net.kyori.adventure.text.Component
-import net.kyori.adventure.text.format.NamedTextColor
-import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerJoinEvent
 
 class PlayerJoinListener(private val plugin: TelegramShiftWorld) : Listener {
+
+    private val BOT_USERNAME = "@ShiftWorldLinkBot"
 
     @EventHandler
     fun onPlayerJoin(event: PlayerJoinEvent) {
@@ -16,57 +15,29 @@ class PlayerJoinListener(private val plugin: TelegramShiftWorld) : Listener {
         val uuid = player.uniqueId
         val playerName = player.name
 
-        plugin.debug("Игрок $playerName пытается войти на сервер")
-
         // Проверяем, есть ли привязка к Telegram
         val telegramId = plugin.linkingManager.getLinkedTelegram(uuid)
 
         if (telegramId != null) {
-            plugin.debug("Игрок $playerName имеет привязку к Telegram ID: $telegramId")
-
-            // Игрок привязан, разрешаем вход
-            val welcomeMessage = Component.text()
-                .append(Component.text("✅ ", NamedTextColor.GREEN))
-                .append(Component.text("Добро пожаловать, ", NamedTextColor.GRAY))
-                .append(Component.text(playerName, NamedTextColor.YELLOW, TextDecoration.BOLD))
-                .append(Component.text("!", NamedTextColor.GRAY))
-                .build()
-
-            player.sendMessage(welcomeMessage)
             return
         }
-
-        plugin.debug("Игрок $playerName не имеет привязки к Telegram")
 
         // Генерируем код привязки
         val linkingCode = plugin.linkingManager.generateLinkingCode(uuid, playerName)
 
         // Создаем сообщение с кодом
-        val kickMessage = Component.text()
-            .append(Component.text("🔗 ", NamedTextColor.BLUE))
-            .append(Component.text("ТРЕБУЕТСЯ ПРИВЯЗКА К TELEGRAM", NamedTextColor.RED, TextDecoration.BOLD))
-            .append(Component.newline())
-            .append(Component.newline())
-            .append(Component.text("📱 Для входа на сервер необходимо привязать аккаунт к Telegram.", NamedTextColor.GRAY))
-            .append(Component.newline())
-            .append(Component.newline())
-            .append(Component.text("🤖 Напишите боту: ", NamedTextColor.YELLOW))
-            .append(Component.text("@YourBotUsername", NamedTextColor.AQUA, TextDecoration.UNDERLINED))
-            .append(Component.newline())
-            .append(Component.newline())
-            .append(Component.text("📝 Отправьте команду: ", NamedTextColor.YELLOW))
-            .append(Component.text("/link $linkingCode", NamedTextColor.GREEN, TextDecoration.BOLD))
-            .append(Component.newline())
-            .append(Component.newline())
-            .append(Component.text("⏰ Код действителен 10 минут", NamedTextColor.RED))
-            .append(Component.newline())
-            .append(Component.newline())
-            .append(Component.text("💡 После привязки заходите снова!", NamedTextColor.GRAY))
-            .build()
+        val kickMessage = (
+                        "§9🔗 §c§lТРЕБУЕТСЯ ПРИВЯЗКА К TELEGRAM\n\n" +
+                        "§7📱 Для входа привяжите Telegram.\n\n" +
+                        "§e🤖 Бот: §b§n$BOT_USERNAME\n\n" +
+                        "§e📝 Команда: §a§l/link $linkingCode\n\n" +
+                        "§c⏰ Код на 10 минут\n\n" +
+                        "§7💡 После привязки заходите снова!"
+                )
 
         // Кикаем игрока с сообщением
-        player.kick(kickMessage)
+        player.kickPlayer(kickMessage)
 
-        plugin.logger.info("Игрок ${playerName} кикнут с кодом привязки: $linkingCode")
+        plugin.logger.info("Игрок $playerName кикнут с кодом привязки: $linkingCode")
     }
 }

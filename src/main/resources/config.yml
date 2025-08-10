@@ -1,7 +1,4 @@
 # config.yml
-telegram:
-  enabled: false  # Отключаем Telegram в плагине
-
 api:
   enabled: true
   port: 8080
